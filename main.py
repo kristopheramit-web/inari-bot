@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import discord
 from groq import Groq
 
@@ -10,6 +11,9 @@ intents.members = True  # Required to edit user nicknames
 
 client_discord = discord.Client(intents=intents)
 client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Track in-flight messages to prevent duplicate triggers
+processing_messages = set()
 
 # Inari's Enhanced Persona
 INARI_PERSONA = """
@@ -23,7 +27,7 @@ You serve directly under your Server Owner and Commander, DRÍFT (username: bitt
 ### Capabilities & Actions:
 You have administrative powers including managing nicknames, creating threads/forum posts, adding reactions, and attaching files.
 
-When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object.
+When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object. Do NOT wrap it in markdown blockquotes or code blocks.
 
 1. To change a user's nickname:
 {
@@ -58,50 +62,58 @@ async def on_message(message):
     if message.author == client_discord.user:
         return
 
-    channel_id = str(message.channel.id)
+    # Deduplication check
+    if message.id in processing_messages:
+        return
+    processing_messages.add(message.id)
 
-    # Maintain recent conversation context (last 5 messages)
-    if channel_id not in chat_memory:
-        chat_memory[channel_id] = []
-    chat_memory[channel_id].append(f"{message.author.display_name} (@{message.author.name}): {message.clean_content}")
-    if len(chat_memory[channel_id]) > 5:
-        chat_memory[channel_id].pop(0)
+    try:
+        channel_id = str(message.channel.id)
 
-    # Trigger conditions: Direct mention, message reply, or keyword "inari"
-    is_mentioned = client_discord.user in message.mentions or "inari" in message.content.lower()
-    is_reply_to_bot = (
-        message.reference 
-        and message.reference.resolved 
-        and isinstance(message.reference.resolved, discord.Message)
-        and message.reference.resolved.author == client_discord.user
-    )
+        # Maintain recent conversation context (last 5 messages)
+        if channel_id not in chat_memory:
+            chat_memory[channel_id] = []
+        chat_memory[channel_id].append(f"{message.author.display_name} (@{message.author.name}): {message.clean_content}")
+        if len(chat_memory[channel_id]) > 5:
+            chat_memory[channel_id].pop(0)
 
-    if is_mentioned or is_reply_to_bot:
-        async with message.channel.typing():
-            context_blob = "\n".join(chat_memory[channel_id])
+        # Trigger conditions: Direct mention, message reply, or keyword "inari"
+        is_mentioned = client_discord.user in message.mentions or "inari" in message.content.lower()
+        is_reply_to_bot = (
+            message.reference 
+            and message.reference.resolved 
+            and isinstance(message.reference.resolved, discord.Message)
+            and message.reference.resolved.author == client_discord.user
+        )
 
-            try:
-                completion = client_groq.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[
-                        {"role": "system", "content": INARI_PERSONA},
-                        {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
-                    ],
-                    temperature=0.8,
-                    max_tokens=250
-                )
+        if is_mentioned or is_reply_to_bot:
+            async with message.channel.typing():
+                context_blob = "\n".join(chat_memory[channel_id])
 
-                raw_response = completion.choices[0].message.content.strip()
+                try:
+                    completion = client_groq.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[
+                            {"role": "system", "content": INARI_PERSONA},
+                            {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
+                        ],
+                        temperature=0.7,
+                        max_tokens=300
+                    )
 
-                # Clean markdown code blocks if the model wrapped the JSON
-                clean_response = raw_response
-                if clean_response.startswith("```"):
-                    clean_response = clean_response.strip("`").replace("json\n", "").replace("json", "").strip()
+                    raw_response = completion.choices[0].message.content.strip()
 
-                # Process JSON action vs standard text response
-                if clean_response.startswith("{") and clean_response.endswith("}"):
-                    try:
-                        data = json.loads(clean_response)
+                    # Extract potential JSON payload using regex if markdown wrappers are present
+                    json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+                    
+                    data = None
+                    if json_match:
+                        try:
+                            data = json.loads(json_match.group(0))
+                        except json.JSONDecodeError:
+                            data = None
+
+                    if data and isinstance(data, dict) and "action" in data:
                         action = data.get("action")
                         reply_text = data.get("reply", "Done!")
 
@@ -176,15 +188,15 @@ async def on_message(message):
                                 await message.reply(f"I tried to create the post, but hit an issue: {e}")
                                 print(f"Error creating thread/forum post: {e}")
 
-                        else:
-                            await message.reply(raw_response)
-
-                    except json.JSONDecodeError:
+                    else:
+                        # Standard plain text response
                         await message.reply(raw_response)
-                else:
-                    await message.reply(raw_response)
 
-            except Exception as e:
-                print(f"Groq API Error: {e}")
+                except Exception as e:
+                    print(f"Groq API Error: {e}")
+
+    finally:
+        # Clean up processed message ID
+        processing_messages.discard(message.id)
 
 client_discord.run(os.getenv("DISCORD_TOKEN"))
