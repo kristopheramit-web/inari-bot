@@ -21,7 +21,7 @@ You serve directly under your Server Owner and Commander, DRÍFT (username: bitt
 - Banter: If regular users insult or taunt you, banter back with sharp wit! You can choose to burn them by changing their nickname to something funny or embarrassing.
 
 ### Capabilities & Actions:
-You have administrative powers including managing nicknames, creating threads, adding reactions, and attaching files.
+You have administrative powers including managing nicknames, creating threads/forum posts, adding reactions, and attaching files.
 
 When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object.
 
@@ -34,14 +34,14 @@ When you decide to execute an administrative action (or when instructed by DRÍF
 }
 * Note: If no target_user is specified when burning an attacker, set target_user to "author".
 
-2. To create a public thread (in current channel OR another target channel):
+2. To create a public thread or forum post (in current channel OR another target channel):
 {
   "action": "create_thread",
-  "target_channel": "hottakes",
-  "thread_name": "Anime Hot Takes",
-  "reply": "On it, Commander! Kicking off a new discussion thread now."
+  "target_channel": "hottakes-n-debates",
+  "thread_name": "Hot Take: Dubbed Anime is Superior",
+  "reply": "On it, Commander! Kicking off a new debate in the forum now."
 }
-* Note: If DRÍFT asks you to post in a specific channel (e.g. "hot takes channel"), set target_channel to a keywords match of that channel's name (e.g. "hottakes"). If no channel is specified, leave target_channel blank or omit it.
+* Note: If DRÍFT asks you to post in a forum or text channel (e.g. "hot takes channel"), set target_channel to keywords matching that channel's name (e.g. "hottakes"). If no channel is specified, leave target_channel blank or omit it.
 
 If you are having a normal chat or answering a question, respond in plain text normally (do NOT use JSON).
 """
@@ -126,35 +126,50 @@ async def on_message(message):
                             thread_name = data.get("thread_name", "Inari's Topic")
                             target_channel_name = data.get("target_channel")
 
-                            # Default to current channel
-                            target_channel = message.channel
+                            search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
 
-                            # Look up channel by keyword matching
-                            if target_channel_name:
-                                search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "")
-                                matched_channel = discord.utils.find(
+                            # 1. Search Standard Text Channels
+                            matched_text_channel = None
+                            if search_term:
+                                matched_text_channel = discord.utils.find(
                                     lambda c: search_term in c.name.lower().replace("-", ""),
                                     message.guild.text_channels
                                 )
-                                if matched_channel:
-                                    target_channel = matched_channel
+
+                            # 2. Search Forum Channels
+                            matched_forum_channel = None
+                            if search_term and not matched_text_channel:
+                                matched_forum_channel = discord.utils.find(
+                                    lambda f: search_term in f.name.lower().replace("-", ""),
+                                    message.guild.forums
+                                )
 
                             try:
-                                new_thread = await target_channel.create_thread(
-                                    name=thread_name,
-                                    type=discord.ChannelType.public_thread
-                                )
-                                await new_thread.send(f"{reply_text}")
+                                # Target is a Forum Channel
+                                if matched_forum_channel:
+                                    new_thread = await matched_forum_channel.create_thread(
+                                        name=thread_name,
+                                        content=f"{reply_text}"
+                                    )
+                                    await message.reply(f"Done, Commander! Created the forum post **{thread_name}** in {matched_forum_channel.mention}!")
 
-                                # Confirmation message if created in a different channel
-                                if target_channel != message.channel:
-                                    await message.reply(f"Done, Commander! I started the thread **{thread_name}** over in {target_channel.mention}!")
+                                # Target is a Standard Text Channel (or default current channel)
                                 else:
-                                    await message.reply(f"Started the thread **{thread_name}** right here!")
+                                    target_chan = matched_text_channel if matched_text_channel else message.channel
+                                    new_thread = await target_chan.create_thread(
+                                        name=thread_name,
+                                        type=discord.ChannelType.public_thread
+                                    )
+                                    await new_thread.send(f"{reply_text}")
+
+                                    if target_chan != message.channel:
+                                        await message.reply(f"Done, Commander! Started the thread **{thread_name}** in {target_chan.mention}!")
+                                    else:
+                                        await message.reply(f"Started the thread **{thread_name}** right here!")
 
                             except Exception as e:
-                                await message.reply(f"I tried to create the thread, but hit an issue: {e}")
-                                print(f"Error creating thread: {e}")
+                                await message.reply(f"I tried to create the post, but hit an issue: {e}")
+                                print(f"Error creating thread/forum post: {e}")
 
                         else:
                             await message.reply(raw_response)
