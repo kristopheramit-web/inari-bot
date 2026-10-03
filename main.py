@@ -74,6 +74,10 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post in the forum!"
 }
 
+* ACTION EXECUTION RULES:
+- ONLY trigger an action ("change_nickname", "create_event", "create_thread") if the MOST RECENT user message explicitly requests that action.
+- If the latest message is general chat, testing speech-to-text, or normal conversation, respond with "action": "none" regardless of previous conversation history.
+
 * EVENT RULES:
 - Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
 
@@ -210,6 +214,9 @@ async def on_message(message):
                             await message.reply(f"{reply_text}")
                             print(f"Error changing nickname: {e}")
 
+                        # Reset context buffer after performing action
+                        chat_memory[channel_id] = []
+
                     elif action == "create_event":
                         event_name = data.get("event_name", "Community Event")
                         description = data.get("description", "")
@@ -236,6 +243,9 @@ async def on_message(message):
                         except Exception as e:
                             await message.reply(f"I tried to create the event, but ran into an issue reading the date/time: {e}")
                             print(f"Error creating event: {e}")
+
+                        # Reset context buffer after performing action
+                        chat_memory[channel_id] = []
 
                     elif action == "create_thread":
                         thread_name = data.get("thread_name", "Inari's Spicy Take~")
@@ -283,6 +293,9 @@ async def on_message(message):
                             await message.reply(f"I tried to create the post, but hit an issue: {e}")
                             print(f"Error creating thread/forum post: {e}")
 
+                        # Reset context buffer after performing action
+                        chat_memory[channel_id] = []
+
                     else:
                         await message.reply(reply_text)
 
@@ -297,3 +310,4 @@ async def on_message(message):
             processing_messages.discard(message.id)
 
 client_discord.run(os.getenv("DISCORD_TOKEN"))
+                             
