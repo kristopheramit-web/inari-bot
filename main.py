@@ -93,10 +93,15 @@ async def on_message(message):
 
                 raw_response = completion.choices[0].message.content.strip()
 
+                # Clean markdown code blocks if the model wrapped the JSON
+                clean_response = raw_response
+                if clean_response.startswith("```"):
+                    clean_response = clean_response.strip("`").replace("json\n", "").replace("json", "").strip()
+
                 # Process JSON action vs standard text response
-                if raw_response.startswith("{") and raw_response.endswith("}"):
+                if clean_response.startswith("{") and clean_response.endswith("}"):
                     try:
-                        data = json.loads(raw_response)
+                        data = json.loads(clean_response)
                         action = data.get("action")
                         reply_text = data.get("reply", "Done!")
 
