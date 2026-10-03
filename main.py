@@ -27,9 +27,15 @@ You serve directly under your Server Owner and Senpai, DRÍFT (username: bitterm
 ### Capabilities & Actions:
 You have administrative powers including managing nicknames, creating threads/forum posts, adding reactions, and attaching files.
 
-When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object. Do NOT wrap it in markdown code blocks.
+You MUST respond strictly in valid JSON format matching one of these schema structures.
 
-1. To change a user's nickname:
+1. To execute a normal chat response (when no administrative action is needed):
+{
+  "action": "none",
+  "reply": "Your normal chat response text here."
+}
+
+2. To change a user's nickname:
 {
   "action": "change_nickname",
   "target_user": "username_or_display_name", 
@@ -38,7 +44,7 @@ When you decide to execute an administrative action (or when instructed by DRÍF
 }
 * Note: If no target_user is specified when burning an attacker, set target_user to "author".
 
-2. To create a public thread or forum post:
+3. To create a public thread or forum post:
 {
   "action": "create_thread",
   "target_channel": "hottakes-n-debates",
@@ -49,10 +55,8 @@ When you decide to execute an administrative action (or when instructed by DRÍF
 
 * CRITICAL INSTRUCTIONS FOR CREATING HOT TAKES / THREADS:
 - `thread_name`: DO NOT repeat standard clichés like 'Dub vs Sub' or 'Anime vs Cartoons'. Get extremely creative and out-of-the-box across varied themes: gaming culture, streamer brainrot, absurd food combinations, controversial video game mechanics, AI overlords, anime tropes, or ridiculous life dilemmas.
-- `forum_body`: This is the actual main post inside the forum! Write a detailed, passionate, witty, or outrageous defense of your take to get chatters arguing. DO NOT put simple bot status messages here.
+- `forum_body`: This is the actual main post inside the forum! Write a detailed, passionate, witty, or outrageous defense of your take to get chatters arguing. Keep it under 250 words so JSON stays crisp.
 - `reply`: This is your short confirmation back to DRÍFT in the current chat.
-
-If you are having a normal chat or answering a question, respond in plain text normally (do NOT use JSON).
 """
 
 # Short-term chat memory buffer (channel_id: list of recent messages)
@@ -102,24 +106,20 @@ async def on_message(message):
                             {"role": "system", "content": INARI_PERSONA},
                             {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
                         ],
-                        temperature=0.95,  # Higher temperature for out-of-the-box creativity
-                        max_tokens=500
+                        response_format={"type": "json_object"},
+                        temperature=0.9,
+                        max_tokens=1500
                     )
 
                     raw_response = completion.choices[0].message.content.strip()
 
-                    # Extract potential JSON payload using regex
-                    json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-                    
-                    data = None
-                    if json_match:
-                        try:
-                            data = json.loads(json_match.group(0))
-                        except json.JSONDecodeError:
-                            data = None
+                    try:
+                        data = json.loads(raw_response)
+                    except json.JSONDecodeError:
+                        data = None
 
-                    if data and isinstance(data, dict) and "action" in data:
-                        action = data.get("action")
+                    if data and isinstance(data, dict):
+                        action = data.get("action", "none")
                         reply_text = data.get("reply", "Done, Senpai!")
 
                         if action == "change_nickname":
@@ -192,6 +192,23 @@ async def on_message(message):
 
                             except Exception as e:
                                 await message.reply(f"I tried to create the post, but hit an issue: {e}")
+                                print(f"Error creating thread/forum post: {e}")
+
+                        else:
+                            # Action is "none" or standard conversation reply
+                            await message.reply(reply_text)
+
+                    else:
+                        await message.reply("Oops, my fox ears got tangled processing that response! Mind asking again, Senpai?")
+
+                except Exception as e:
+                    print(f"Groq API Error: {e}")
+
+    finally:
+        # Clean up processed message ID
+        processing_messages.discard(message.id)
+
+client_discord.run(os.getenv("DISCORD_TOKEN"))
                                 print(f"Error creating thread/forum post: {e}")
 
                     else:
