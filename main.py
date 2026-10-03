@@ -20,7 +20,7 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 ANNOUNCEMENT_CHANNEL_ID = 1555715844066119761  
 
 # OWNER SAFEGUARD: Replace with your numeric Discord User ID or handle
-SERVER_OWNER_ID = 000000000000000000  # Replace 0000... with your numeric Discord ID (e.g., 123456789012345678)
+SERVER_OWNER_ID = 424813819169341441  # Replace 0000... with your numeric Discord ID (e.g., 123456789012345678)
 SERVER_OWNER_HANDLE = "bittermel9n"  # Fallback handle check
 
 # Track processed message IDs to strictly prevent duplicate executions
