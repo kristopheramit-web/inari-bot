@@ -221,8 +221,5 @@ async def on_message(message):
     finally:
         async with processing_lock:
             processing_messages.discard(message.id)
-finally:
-        # Clean up processed message ID
-        processing_messages.discard(message.id)
 
 client_discord.run(os.getenv("DISCORD_TOKEN"))
