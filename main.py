@@ -10,9 +10,13 @@ from datetime import datetime, timezone, timedelta
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True  # Required to edit user nicknames
+intents.guild_scheduled_events = True  # Needed to track scheduled events!
 
 client_discord = discord.Client(intents=intents)
 client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Announcement channel ID (#updates)
+ANNOUNCEMENT_CHANNEL_ID = 1555715844066119761  
 
 # Track in-flight message IDs to strictly prevent double execution
 processing_messages = set()
@@ -71,15 +75,11 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
 }
 
 * EVENT RULES:
-- Convert casual spoken/written times (e.g., "Friday Oct 10 at 9pm") into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
+- Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
 
 * CRITICAL RULES FOR THREAD TOPICS:
 - ABSOLUTELY DO NOT post about AI, NPCs, AI Cheaters, or Tech Ethics!
-- ROTATE TOPICS WILDLY across these themes:
-  * Food Horrors (e.g., Pineapple on Pizza, cereal before milk, cold fries).
-  * Anime Tropes (e.g., Filler episodes, tournament arcs, beach episodes).
-  * Gaming Mechanics (e.g., Turn-based vs action RPGs, weapon durability, stealth missions).
-  * Streamer / Discord Culture (e.g., Backseat gaming, lurkers, emotes).
+- ROTATE TOPICS WILDLY across Food Horrors, Anime Tropes, Gaming Mechanics, and Streamer/Discord Culture.
 """
 
 # Short-term chat memory buffer
@@ -88,6 +88,43 @@ chat_memory = {}
 @client_discord.event
 async def on_ready():
     print(f'✨ Inari is live and hanging out as {client_discord.user}')
+
+# 1. AUTOMATED EVENT CREATED LISTENER
+@client_discord.event
+async def on_scheduled_event_create(event):
+    channel = client_discord.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if channel:
+        location_info = f"\n📍 **Where:** {event.location}" if event.location else ""
+        desc_info = f"\n\n{event.description}" if event.description else ""
+        start_time_formatted = f"<t:{int(event.start_time.timestamp())}:F>"
+        
+        announcement = (
+            f"📅 **New Event Scheduled!**~ *kon kon!*\n"
+            f"**{event.name}**\n"
+            f"⏰ **When:** {start_time_formatted}"
+            f"{location_info}{desc_info}\n\n"
+            f"Mark your calendars, everyone! ✨"
+        )
+        await channel.send(announcement)
+        print(f"Announced new event creation for: {event.name}")
+
+# 2. AUTOMATED EVENT KICKOFF LISTENER
+@client_discord.event
+async def on_scheduled_event_update(before, after):
+    # Detect when an event transitions to 'ACTIVE' (Started)
+    if before.status != discord.EventStatus.active and after.status == discord.EventStatus.active:
+        channel = client_discord.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        if channel:
+            location_info = f"\n📍 **Where:** {after.location}" if after.location else ""
+            desc_info = f"\n\n{after.description}" if after.description else ""
+            
+            announcement = (
+                f"@everyone 🎉 **{after.name}** is starting RIGHT NOW!~ *kon kon!*\n"
+                f"{desc_info}{location_info}\n"
+                f"Get in here Senpai's crew! 🔥"
+            )
+            await channel.send(announcement)
+            print(f"Announced event kickoff for: {after.name}")
 
 @client_discord.event
 async def on_message(message):
@@ -127,7 +164,6 @@ async def on_message(message):
             context_blob = "\n".join(chat_memory[channel_id])
 
             try:
-                # Get current UTC time to give AI context for relative dates
                 now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
                 completion = client_groq.chat.completions.create(
@@ -208,7 +244,6 @@ async def on_message(message):
 
                         search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
 
-                        # 1. Search Standard Text Channels
                         matched_text_channel = None
                         if search_term:
                             matched_text_channel = discord.utils.find(
@@ -216,7 +251,6 @@ async def on_message(message):
                                 message.guild.text_channels
                             )
 
-                        # 2. Search Forum Channels
                         matched_forum_channel = None
                         if search_term and not matched_text_channel:
                             matched_forum_channel = discord.utils.find(
@@ -225,7 +259,6 @@ async def on_message(message):
                             )
 
                         try:
-                            # Target is a Forum Channel
                             if matched_forum_channel:
                                 new_thread = await matched_forum_channel.create_thread(
                                     name=thread_name,
@@ -233,7 +266,6 @@ async def on_message(message):
                                 )
                                 await message.reply(f"{reply_text}\n*(Opened **{thread_name}** in {matched_forum_channel.mention})*")
 
-                            # Target is a Standard Text Channel (or default current channel)
                             else:
                                 target_chan = matched_text_channel if matched_text_channel else message.channel
                                 new_thread = await target_chan.create_thread(
@@ -252,7 +284,6 @@ async def on_message(message):
                             print(f"Error creating thread/forum post: {e}")
 
                     else:
-                        # Action is "none" or standard conversation reply
                         await message.reply(reply_text)
 
                 else:
