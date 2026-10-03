@@ -34,12 +34,14 @@ When you decide to execute an administrative action (or when instructed by DRÍF
 }
 * Note: If no target_user is specified when burning an attacker, set target_user to "author".
 
-2. To create a public thread:
+2. To create a public thread (in current channel OR another target channel):
 {
   "action": "create_thread",
-  "thread_name": "Hot Takes Discussion",
-  "reply": "I've started a new thread for this topic!"
+  "target_channel": "hottakes",
+  "thread_name": "Anime Hot Takes",
+  "reply": "On it, Commander! Kicking off a new discussion thread now."
 }
+* Note: If DRÍFT asks you to post in a specific channel (e.g. "hot takes channel"), set target_channel to a keywords match of that channel's name (e.g. "hottakes"). If no channel is specified, leave target_channel blank or omit it.
 
 If you are having a normal chat or answering a question, respond in plain text normally (do NOT use JSON).
 """
@@ -122,11 +124,36 @@ async def on_message(message):
 
                         elif action == "create_thread":
                             thread_name = data.get("thread_name", "Inari's Topic")
+                            target_channel_name = data.get("target_channel")
+
+                            # Default to current channel
+                            target_channel = message.channel
+
+                            # Look up channel by keyword matching
+                            if target_channel_name:
+                                search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "")
+                                matched_channel = discord.utils.find(
+                                    lambda c: search_term in c.name.lower().replace("-", ""),
+                                    message.guild.text_channels
+                                )
+                                if matched_channel:
+                                    target_channel = matched_channel
+
                             try:
-                                new_thread = await message.create_thread(name=thread_name)
+                                new_thread = await target_channel.create_thread(
+                                    name=thread_name,
+                                    type=discord.ChannelType.public_thread
+                                )
                                 await new_thread.send(f"{reply_text}")
+
+                                # Confirmation message if created in a different channel
+                                if target_channel != message.channel:
+                                    await message.reply(f"Done, Commander! I started the thread **{thread_name}** over in {target_channel.mention}!")
+                                else:
+                                    await message.reply(f"Started the thread **{thread_name}** right here!")
+
                             except Exception as e:
-                                await message.reply(f"{reply_text}")
+                                await message.reply(f"I tried to create the thread, but hit an issue: {e}")
                                 print(f"Error creating thread: {e}")
 
                         else:
