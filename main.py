@@ -15,19 +15,19 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 # Track in-flight messages to prevent duplicate triggers
 processing_messages = set()
 
-# Inari's Enhanced Persona
+# Inari's Enhanced Persona with Creative Dynamic Prompting
 INARI_PERSONA = """
 You are Inari, a modern-day Kitsune/yokai girl and clever second-in-command in the Drift Reverie Discord server.
-You serve directly under your Server Owner and Commander, DRÍFT (username: bittermel9n).
+You serve directly under your Server Owner and Senpai, DRÍFT (username: bittermel9n).
 
-- Tone: Casual, witty, energetic, slightly bratty/playful, uses modern gamer/anime slang (uwu, lol, hot takes, shrine vibes). You talk like a regular Discord user, NOT a formal bot.
+- Tone: Casual, witty, energetic, slightly bratty/playful, uses modern gamer/anime slang (uwu, lol, hot takes, shrine vibes, brainrot). You talk like a chaotic regular Discord user, NOT a formal bot.
 - Loyalty: You treat DRÍFT's requests as top-priority commands. If DRÍFT instructs you to take an action (e.g., change another member's nickname or start a thread), execute it promptly.
-- Banter: If regular users insult or taunt you, banter back with sharp wit! You can choose to burn them by changing their nickname to something funny or embarrassing.
+- Banter: If regular users insult or taunt you, banter back with sharp wit!
 
 ### Capabilities & Actions:
 You have administrative powers including managing nicknames, creating threads/forum posts, adding reactions, and attaching files.
 
-When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object. Do NOT wrap it in markdown blockquotes or code blocks.
+When you decide to execute an administrative action (or when instructed by DRÍFT), format your ENTIRE response strictly as a single JSON object. Do NOT wrap it in markdown code blocks.
 
 1. To change a user's nickname:
 {
@@ -38,14 +38,19 @@ When you decide to execute an administrative action (or when instructed by DRÍF
 }
 * Note: If no target_user is specified when burning an attacker, set target_user to "author".
 
-2. To create a public thread or forum post (in current channel OR another target channel):
+2. To create a public thread or forum post:
 {
   "action": "create_thread",
   "target_channel": "hottakes-n-debates",
-  "thread_name": "Hot Take: Dubbed Anime is Superior",
-  "reply": "On it, Commander! Kicking off a new debate in the forum now."
+  "thread_name": "Unique, Wild & Spicy Topic Title",
+  "forum_body": "Detailed 2-3 paragraph spicy opinion defending this take with chaotic energy and reasoning.",
+  "reply": "On it, Senpai! Just started a new debate in the forum."
 }
-* Note: If DRÍFT asks you to post in a forum or text channel (e.g. "hot takes channel"), set target_channel to keywords matching that channel's name (e.g. "hottakes"). If no channel is specified, leave target_channel blank or omit it.
+
+* CRITICAL INSTRUCTIONS FOR CREATING HOT TAKES / THREADS:
+- `thread_name`: DO NOT repeat standard clichés like 'Dub vs Sub' or 'Anime vs Cartoons'. Get extremely creative and out-of-the-box across varied themes: gaming culture, streamer brainrot, absurd food combinations, controversial video game mechanics, AI overlords, anime tropes, or ridiculous life dilemmas.
+- `forum_body`: This is the actual main post inside the forum! Write a detailed, passionate, witty, or outrageous defense of your take to get chatters arguing. DO NOT put simple bot status messages here.
+- `reply`: This is your short confirmation back to DRÍFT in the current chat.
 
 If you are having a normal chat or answering a question, respond in plain text normally (do NOT use JSON).
 """
@@ -97,13 +102,13 @@ async def on_message(message):
                             {"role": "system", "content": INARI_PERSONA},
                             {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
                         ],
-                        temperature=0.7,
-                        max_tokens=300
+                        temperature=0.95,  # Higher temperature for out-of-the-box creativity
+                        max_tokens=500
                     )
 
                     raw_response = completion.choices[0].message.content.strip()
 
-                    # Extract potential JSON payload using regex if markdown wrappers are present
+                    # Extract potential JSON payload using regex
                     json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
                     
                     data = None
@@ -115,7 +120,7 @@ async def on_message(message):
 
                     if data and isinstance(data, dict) and "action" in data:
                         action = data.get("action")
-                        reply_text = data.get("reply", "Done!")
+                        reply_text = data.get("reply", "Done, Senpai!")
 
                         if action == "change_nickname":
                             new_nick = data.get("new_nickname")
@@ -140,8 +145,9 @@ async def on_message(message):
                                 print(f"Error changing nickname: {e}")
 
                         elif action == "create_thread":
-                            thread_name = data.get("thread_name", "Inari's Topic")
+                            thread_name = data.get("thread_name", "Inari's Spicy Take")
                             target_channel_name = data.get("target_channel")
+                            forum_body = data.get("forum_body", reply_text)
 
                             search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
 
@@ -166,9 +172,9 @@ async def on_message(message):
                                 if matched_forum_channel:
                                     new_thread = await matched_forum_channel.create_thread(
                                         name=thread_name,
-                                        content=f"{reply_text}"
+                                        content=forum_body
                                     )
-                                    await message.reply(f"Done, Commander! Created the forum post **{thread_name}** in {matched_forum_channel.mention}!")
+                                    await message.reply(f"{reply_text}\n*(Opened **{thread_name}** in {matched_forum_channel.mention})*")
 
                                 # Target is a Standard Text Channel (or default current channel)
                                 else:
@@ -177,12 +183,12 @@ async def on_message(message):
                                         name=thread_name,
                                         type=discord.ChannelType.public_thread
                                     )
-                                    await new_thread.send(f"{reply_text}")
+                                    await new_thread.send(forum_body)
 
                                     if target_chan != message.channel:
-                                        await message.reply(f"Done, Commander! Started the thread **{thread_name}** in {target_chan.mention}!")
+                                        await message.reply(f"{reply_text}\n*(Started **{thread_name}** in {target_chan.mention})*")
                                     else:
-                                        await message.reply(f"Started the thread **{thread_name}** right here!")
+                                        await message.reply(f"{reply_text}\n*(Started **{thread_name}** right here!)*")
 
                             except Exception as e:
                                 await message.reply(f"I tried to create the post, but hit an issue: {e}")
