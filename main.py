@@ -9,8 +9,8 @@ from datetime import datetime, timezone, timedelta
 # Enable required intents
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # Required to edit user nicknames
-intents.guild_scheduled_events = True  # Needed to track scheduled events
+intents.members = True  # Required for role and nickname management
+intents.guild_scheduled_events = True  # Needed for scheduled events
 
 # Initialize clients
 client_discord = discord.Client(intents=intents)
@@ -19,9 +19,12 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 # Announcement channel ID (#updates)
 ANNOUNCEMENT_CHANNEL_ID = 1555715844066119761  
 
+# OWNER SAFEGUARD: Replace with your numeric Discord User ID or handle
+SERVER_OWNER_ID = 000000000000000000  # Replace 0000... with your numeric Discord ID (e.g., 123456789012345678)
+SERVER_OWNER_HANDLE = "bittermel9n"  # Fallback handle check
+
 # Track processed message IDs to strictly prevent duplicate executions
 processed_message_ids = set()
-processing_messages = set()
 processing_lock = asyncio.Lock()
 
 # Inari's Persona & Speech Style
@@ -39,7 +42,7 @@ You are the clever, slightly cheeky second-in-command in the Drift Reverie Disco
 - Banter: If regular users insult or taunt you, banter back with sharp wit and playful sass!
 
 ### Capabilities & Actions:
-You have administrative powers including managing nicknames, creating scheduled server events, posting messages across channels, and creating threads/forum posts.
+You have administrative powers including managing nicknames, managing roles, creating channels, creating scheduled server events, posting messages across channels, creating threads/forum posts, and running interactive reaction polls.
 
 You MUST respond strictly in valid JSON format matching one of these schema structures:
 
@@ -65,7 +68,16 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "Hehe, enjoy your cute new title~ *kon kon!*"
 }
 
-4. Create Scheduled Server Event:
+4. Assign/Remove Role:
+{
+  "action": "manage_role",
+  "target_user": "username_or_display_name",
+  "role_name": "Role Title",
+  "operation": "add",
+  "reply": "Done! Updated roles for you~ *kon kon!*"
+}
+
+5. Create Scheduled Server Event:
 {
   "action": "create_event",
   "event_name": "Catchy Event Title",
@@ -75,19 +87,31 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "All set, Senpai!~ *kon kon!* I scheduled the event for you!"
 }
 
-5. Create Thread or Forum Post:
+6. Create Thread or Forum Post:
 {
   "action": "create_thread",
   "target_channel": "channel_or_forum_name",
   "thread_name": "Unique, Wild & Spicy Topic Title",
-  "forum_body": "Write this post casually in character as Inari! Use tildes (~), light interjections, and keep it under 100 words.",
+  "forum_body": "Write this post casually in character as Inari!",
   "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post for you!"
 }
 
+7. Create a Poll with Reaction Options:
+{
+  "action": "create_poll",
+  "target_channel": "exact_or_fuzzy_channel_name",
+  "question": "What game should we stream this weekend?",
+  "options": ["Option A", "Option B", "Option C"],
+  "reply": "Poll created, Senpai!~ *kon kon!* Everyone head over to #target-channel to cast your votes!"
+}
+
 * ACTION EXECUTION RULES:
-- ONLY trigger an action ("send_message", "change_nickname", "create_event", "create_thread") if the LATEST user message explicitly and directly requests that action.
+- ONLY trigger an action if the LATEST user message explicitly and directly requests that action.
 - If an action was ALREADY completed in the context history, or if the latest message is general chat, testing, or a follow-up question, set "action": "none".
-- When commanded to post/send a message to a specific channel, use "send_message" and name the channel in "target_channel".
+
+* NICKNAME SPECIAL RULES:
+- If Senpai (DRÍFT) asks to change a nickname (for himself or anyone else), honor the EXACT name requested.
+- If a REGULAR USER asks for a nickname, DO NOT give them what they asked for! Instead, invent a funny, lighthearted, roasted/insulting nickname for them (e.g., "AFK Potato", "Loot Goblin", "Certified Yap Master", "Bottom Fragger") and roast them in your reply!
 
 * EVENT RULES:
 - Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
@@ -100,13 +124,19 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
 # Short-term chat memory buffer
 chat_memory = {}
 
+def is_authorized_owner(author: discord.User) -> bool:
+    """Checks if the user executing the command is the authorized owner (Senpai)."""
+    if SERVER_OWNER_ID and author.id == SERVER_OWNER_ID:
+        return True
+    if author.name.lower() == SERVER_OWNER_HANDLE.lower():
+        return True
+    return False
+
 def get_server_structure_string(guild):
     """Dynamically maps out all categories, text channels, and forum channels in the server."""
     structure = []
     
-    # Process channels categorized under categories
     for category in guild.categories:
-        # Exclude Voice Categories or Voice Channels
         if "voice" in category.name.lower():
             continue
             
@@ -121,7 +151,6 @@ def get_server_structure_string(guild):
             structure.append(f"Category: [{category.name}]")
             structure.extend(valid_channels)
             
-    # Process uncategorized channels
     uncategorized = [
         f"  - #{c.name}" for c in guild.channels 
         if c.category is None and isinstance(c, (discord.TextChannel, discord.ForumChannel))
@@ -153,7 +182,6 @@ async def on_scheduled_event_create(event):
             f"Mark your calendars, everyone! ✨"
         )
         await channel.send(announcement)
-        print(f"Announced new event creation for: {event.name}")
 
 # 2. AUTOMATED EVENT KICKOFF LISTENER
 @client_discord.event
@@ -170,7 +198,6 @@ async def on_scheduled_event_update(before, after):
                 f"Get in here Senpai's crew! 🔥"
             )
             await channel.send(announcement)
-            print(f"Announced event kickoff for: {after.name}")
 
 @client_discord.event
 async def on_message(message):
@@ -201,7 +228,6 @@ async def on_message(message):
     try:
         channel_id = str(message.channel.id)
 
-        # Maintain recent conversation context (last 5 messages)
         if channel_id not in chat_memory:
             chat_memory[channel_id] = []
         chat_memory[channel_id].append(f"{message.author.display_name} (@{message.author.name}): {message.clean_content}")
@@ -245,6 +271,13 @@ async def on_message(message):
                     action = data.get("action", "none")
                     reply_text = data.get("reply", "Done, Senpai!~ *kon kon!*")
 
+                    # SAFEGUARD CHECK: Block strictly administrative actions if not requested by owner
+                    owner_only_actions = ["send_message", "manage_role", "create_event", "create_thread", "create_poll"]
+                    if action in owner_only_actions and not is_authorized_owner(message.author):
+                        await message.reply("Hmph! 😤 I only take management orders from my Senpai DRÍFT! Nice try though~ *kon kon!*")
+                        chat_memory[channel_id] = []
+                        return
+
                     # ACTION 1: SEND MESSAGE TO ANOTHER CHANNEL
                     if action == "send_message":
                         target_channel_name = data.get("target_channel", "")
@@ -264,37 +297,77 @@ async def on_message(message):
                             else:
                                 await message.reply(f"I tried to send the message, but couldn't locate text channel '{target_channel_name}', Senpai!")
                         except Exception as e:
-                            await message.reply(f"I tried to post in #{target_channel_name}, but ran into a permission error: {e}")
-                            print(f"Error sending message to channel: {e}")
+                            await message.reply(f"I tried to post in #{target_channel_name}, but ran into an issue: {e}")
 
                         chat_memory[channel_id] = []
 
                     # ACTION 2: CHANGE NICKNAME
                     elif action == "change_nickname":
-                        new_nick = data.get("new_nickname")
+                        new_nick = data.get("new_nickname", "Gullible Fox Food")
                         target_name = data.get("target_user", "author")
 
-                        target_member = message.author
-                        if target_name.lower() != "author":
-                            matched_member = discord.utils.find(
-                                lambda m: target_name.lower() in m.name.lower() or target_name.lower() in m.display_name.lower(),
-                                message.guild.members
-                            )
-                            if matched_member:
-                                target_member = matched_member
+                        # Regular members can only have their own nickname changed (and it gets roasted by LLM prompt)
+                        if not is_authorized_owner(message.author):
+                            target_member = message.author
+                        else:
+                            target_member = message.author
+                            if target_name.lower() != "author":
+                                matched_member = discord.utils.find(
+                                    lambda m: target_name.lower() in m.name.lower() or target_name.lower() in m.display_name.lower(),
+                                    message.guild.members
+                                )
+                                if matched_member:
+                                    target_member = matched_member
+
+                        # Ensure nickname fits within Discord's 32-character limit
+                        new_nick = new_nick[:32]
 
                         try:
                             await target_member.edit(nick=new_nick)
-                            await message.reply(f"{reply_text}\n*(Changed {target_member.mention}'s nickname to **{new_nick}**)*")
+                            await message.reply(f"{reply_text}\n*(Set {target_member.mention}'s nickname to **{new_nick}**)*")
                         except discord.Forbidden:
-                            await message.reply(f"{reply_text}\n*(I tried to change {target_member.display_name}'s nickname, but their rank is higher than mine!)*")
+                            await message.reply(f"{reply_text}\n*(I tried to give you a fitting nickname, but your server role is higher than mine! Hmph!)*")
                         except Exception as e:
                             await message.reply(f"{reply_text}")
-                            print(f"Error changing nickname: {e}")
 
                         chat_memory[channel_id] = []
 
-                    # ACTION 3: CREATE SCHEDULED EVENT
+                    # ACTION 3: MANAGE ROLES
+                    elif action == "manage_role":
+                        role_name = data.get("role_name", "")
+                        target_name = data.get("target_user", "author")
+                        operation = data.get("operation", "add")
+
+                        matched_member = message.author
+                        if target_name.lower() != "author":
+                            found_member = discord.utils.find(
+                                lambda m: target_name.lower() in m.name.lower() or target_name.lower() in m.display_name.lower(),
+                                message.guild.members
+                            )
+                            if found_member:
+                                matched_member = found_member
+
+                        matched_role = discord.utils.find(
+                            lambda r: role_name.lower() in r.name.lower(),
+                            message.guild.roles
+                        )
+
+                        try:
+                            if matched_role and matched_member:
+                                if operation == "add":
+                                    await matched_member.add_roles(matched_role)
+                                    await message.reply(f"{reply_text}\n*(Added role **{matched_role.name}** to {matched_member.mention})*")
+                                else:
+                                    await matched_member.remove_roles(matched_role)
+                                    await message.reply(f"{reply_text}\n*(Removed role **{matched_role.name}** from {matched_member.mention})*")
+                            else:
+                                await message.reply(f"I couldn't find the role or user to update, Senpai!")
+                        except Exception as e:
+                            await message.reply(f"Failed to update roles: {e}")
+
+                        chat_memory[channel_id] = []
+
+                    # ACTION 4: CREATE SCHEDULED EVENT
                     elif action == "create_event":
                         event_name = data.get("event_name", "Community Event")
                         description = data.get("description", "")
@@ -320,11 +393,10 @@ async def on_message(message):
                             await message.reply(f"{reply_text}\n*(Created scheduled event: **{event.name}** for {start_str})*")
                         except Exception as e:
                             await message.reply(f"I tried to create the event, but ran into an issue reading the date/time: {e}")
-                            print(f"Error creating event: {e}")
 
                         chat_memory[channel_id] = []
 
-                    # ACTION 4: CREATE THREAD OR FORUM POST
+                    # ACTION 5: CREATE THREAD OR FORUM POST
                     elif action == "create_thread":
                         thread_name = data.get("thread_name", "Inari's Spicy Take~")
                         target_channel_name = data.get("target_channel")
@@ -367,7 +439,46 @@ async def on_message(message):
 
                         except Exception as e:
                             await message.reply(f"I tried to create the post, but hit an issue: {e}")
-                            print(f"Error creating thread/forum post: {e}")
+
+                        chat_memory[channel_id] = []
+
+                    # ACTION 6: CREATE A POLL WITH REACTION BUTTONS
+                    elif action == "create_poll":
+                        target_channel_name = data.get("target_channel", "")
+                        question = data.get("question", "Community Poll")
+                        options = data.get("options", [])
+
+                        search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
+
+                        matched_channel = discord.utils.find(
+                            lambda c: search_term in c.name.lower().replace("-", "") and isinstance(c, discord.TextChannel),
+                            message.guild.text_channels
+                        )
+
+                        if not matched_channel:
+                            matched_channel = message.channel
+
+                        try:
+                            number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                            
+                            if not options:
+                                options = ["Yes", "No"]
+                                number_emojis = ["👍", "👎"]
+
+                            poll_lines = [f"📊 **{question}**\n"]
+                            for idx, opt in enumerate(options[:10]):
+                                poll_lines.append(f"{number_emojis[idx]} {opt}")
+                            
+                            poll_text = "\n".join(poll_lines)
+                            poll_msg = await matched_channel.send(poll_text)
+
+                            for idx in range(min(len(options), 10)):
+                                await poll_msg.add_reaction(number_emojis[idx])
+
+                            await message.reply(f"{reply_text}\n*(Created poll in {matched_channel.mention})*")
+
+                        except Exception as e:
+                            await message.reply(f"I tried to create the poll, but ran into an issue: {e}")
 
                         chat_memory[channel_id] = []
 
@@ -383,4 +494,4 @@ async def on_message(message):
     except Exception as e:
         print(f"Error in on_message handler: {e}")
 
-client_discord.run(os.getenv("DISCORD_TOKEN"))
+client_discord.run(os.getenv("DISCORD_TOKEN"))           
