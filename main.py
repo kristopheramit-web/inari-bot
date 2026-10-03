@@ -10,9 +10,9 @@ from datetime import datetime, timezone, timedelta
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True  # Required to edit user nicknames
-intents.guild_scheduled_events = True  # Needed to track scheduled events!
+intents.guild_scheduled_events = True  # Needed to track scheduled events
 
-# Initialize clients first before any event decorators!
+# Initialize clients
 client_discord = discord.Client(intents=intents)
 client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -36,20 +36,28 @@ You are the clever, slightly cheeky second-in-command in the Drift Reverie Disco
   * Use cute interjections naturally (*kon kon!~*, *hehe*, *hmph!*, *uwu*). Keep physical actions subtle and minimal.
   * Talk like a casual, online Discord regular—NOT an AI or formal essay writer.
 - Loyalty: Always treat Senpai (DRÍFT) with extra affection, hype, and eagerness!
-- Banter: If regular users insult or taunt you, banter back with sharp wit and sass!
+- Banter: If regular users insult or taunt you, banter back with sharp wit and playful sass!
 
 ### Capabilities & Actions:
-You have administrative powers including managing nicknames, creating scheduled server events, and creating threads/forum posts.
+You have administrative powers including managing nicknames, creating scheduled server events, posting messages across channels, and creating threads/forum posts.
 
 You MUST respond strictly in valid JSON format matching one of these schema structures:
 
-1. Standard Chat Response (when no administrative action is needed):
+1. Standard Chat Response (when no action in another channel/setting is needed):
 {
   "action": "none",
   "reply": "Your cute anime girl chat response here~ *kon kon!*"
 }
 
-2. Change Nickname:
+2. Send Message to a Text Channel:
+{
+  "action": "send_message",
+  "target_channel": "exact_or_fuzzy_channel_name",
+  "message_body": "Write the actual content/post you want to send in that channel here~ *kon kon!*",
+  "reply": "All set, Senpai!~ *kon kon!* I dropped the message in #channel-name!"
+}
+
+3. Change Nickname:
 {
   "action": "change_nickname",
   "target_user": "username_or_display_name", 
@@ -57,7 +65,7 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "Hehe, enjoy your cute new title~ *kon kon!*"
 }
 
-3. Create Scheduled Server Event:
+4. Create Scheduled Server Event:
 {
   "action": "create_event",
   "event_name": "Catchy Event Title",
@@ -67,29 +75,62 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "All set, Senpai!~ *kon kon!* I scheduled the event for you!"
 }
 
-4. Create Thread or Forum Post:
+5. Create Thread or Forum Post:
 {
   "action": "create_thread",
-  "target_channel": "hottakes-n-debates",
+  "target_channel": "channel_or_forum_name",
   "thread_name": "Unique, Wild & Spicy Topic Title",
   "forum_body": "Write this post casually in character as Inari! Use tildes (~), light interjections, and keep it under 100 words.",
-  "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post in the forum!"
+  "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post for you!"
 }
 
 * ACTION EXECUTION RULES:
-- ONLY trigger an action ("change_nickname", "create_event", "create_thread") if the LATEST user message explicitly and directly requests that action.
-- If an event/thread/nickname action was ALREADY completed in the context history, or if the latest message is general chat, speech-to-text testing, or a follow-up question, you MUST set "action": "none".
+- ONLY trigger an action ("send_message", "change_nickname", "create_event", "create_thread") if the LATEST user message explicitly and directly requests that action.
+- If an action was ALREADY completed in the context history, or if the latest message is general chat, testing, or a follow-up question, set "action": "none".
+- When commanded to post/send a message to a specific channel, use "send_message" and name the channel in "target_channel".
 
 * EVENT RULES:
 - Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
 
-* CRITICAL RULES FOR THREAD TOPICS:
+* CRITICAL RULES FOR THREAD/POST TOPICS:
 - ABSOLUTELY DO NOT post about AI, NPCs, AI Cheaters, or Tech Ethics!
 - ROTATE TOPICS WILDLY across Food Horrors, Anime Tropes, Gaming Mechanics, and Streamer/Discord Culture.
 """
 
 # Short-term chat memory buffer
 chat_memory = {}
+
+def get_server_structure_string(guild):
+    """Dynamically maps out all categories, text channels, and forum channels in the server."""
+    structure = []
+    
+    # Process channels categorized under categories
+    for category in guild.categories:
+        # Exclude Voice Categories or Voice Channels
+        if "voice" in category.name.lower():
+            continue
+            
+        valid_channels = []
+        for channel in category.channels:
+            if isinstance(channel, discord.TextChannel):
+                valid_channels.append(f"  - #{channel.name} (Text Channel)")
+            elif isinstance(channel, discord.ForumChannel):
+                valid_channels.append(f"  - #{channel.name} (Forum Channel)")
+                
+        if valid_channels:
+            structure.append(f"Category: [{category.name}]")
+            structure.extend(valid_channels)
+            
+    # Process uncategorized channels
+    uncategorized = [
+        f"  - #{c.name}" for c in guild.channels 
+        if c.category is None and isinstance(c, (discord.TextChannel, discord.ForumChannel))
+    ]
+    if uncategorized:
+        structure.append("Uncategorized Channels:")
+        structure.extend(uncategorized)
+        
+    return "\n".join(structure)
 
 @client_discord.event
 async def on_ready():
@@ -117,7 +158,6 @@ async def on_scheduled_event_create(event):
 # 2. AUTOMATED EVENT KICKOFF LISTENER
 @client_discord.event
 async def on_scheduled_event_update(before, after):
-    # Detect when an event transitions to 'ACTIVE' (Started)
     if before.status != discord.EventStatus.active and after.status == discord.EventStatus.active:
         channel = client_discord.get_channel(ANNOUNCEMENT_CHANNEL_ID)
         if channel:
@@ -155,7 +195,6 @@ async def on_message(message):
             return
         processed_message_ids.add(message.id)
 
-        # Keep set size managed
         if len(processed_message_ids) > 1000:
             processed_message_ids.pop()
 
@@ -171,14 +210,23 @@ async def on_message(message):
 
         async with message.channel.typing():
             context_blob = "\n".join(chat_memory[channel_id])
+            server_structure = get_server_structure_string(message.guild)
 
             try:
                 now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+                system_prompt = (
+                    f"{INARI_PERSONA}\n\n"
+                    f"Current UTC Time: {now_str}\n\n"
+                    f"### CURRENT SERVER STRUCTURE & AVAILABLE CHANNELS:\n"
+                    f"{server_structure}\n\n"
+                    f"CRITICAL: Only interact with or target channels listed in the structure above!"
+                )
+
                 completion = client_groq.chat.completions.create(
                     model="openai/gpt-oss-120b",
                     messages=[
-                        {"role": "system", "content": INARI_PERSONA + f"\n\nCurrent UTC Time: {now_str}"},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
                     ],
                     response_format={"type": "json_object"},
@@ -197,7 +245,32 @@ async def on_message(message):
                     action = data.get("action", "none")
                     reply_text = data.get("reply", "Done, Senpai!~ *kon kon!*")
 
-                    if action == "change_nickname":
+                    # ACTION 1: SEND MESSAGE TO ANOTHER CHANNEL
+                    if action == "send_message":
+                        target_channel_name = data.get("target_channel", "")
+                        message_body = data.get("message_body", "")
+
+                        search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
+
+                        matched_channel = discord.utils.find(
+                            lambda c: search_term in c.name.lower().replace("-", "") and isinstance(c, discord.TextChannel),
+                            message.guild.text_channels
+                        )
+
+                        try:
+                            if matched_channel and message_body:
+                                await matched_channel.send(message_body)
+                                await message.reply(f"{reply_text}\n*(Posted message in {matched_channel.mention})*")
+                            else:
+                                await message.reply(f"I tried to send the message, but couldn't locate text channel '{target_channel_name}', Senpai!")
+                        except Exception as e:
+                            await message.reply(f"I tried to post in #{target_channel_name}, but ran into a permission error: {e}")
+                            print(f"Error sending message to channel: {e}")
+
+                        chat_memory[channel_id] = []
+
+                    # ACTION 2: CHANGE NICKNAME
+                    elif action == "change_nickname":
                         new_nick = data.get("new_nickname")
                         target_name = data.get("target_user", "author")
 
@@ -221,6 +294,7 @@ async def on_message(message):
 
                         chat_memory[channel_id] = []
 
+                    # ACTION 3: CREATE SCHEDULED EVENT
                     elif action == "create_event":
                         event_name = data.get("event_name", "Community Event")
                         description = data.get("description", "")
@@ -250,6 +324,7 @@ async def on_message(message):
 
                         chat_memory[channel_id] = []
 
+                    # ACTION 4: CREATE THREAD OR FORUM POST
                     elif action == "create_thread":
                         thread_name = data.get("thread_name", "Inari's Spicy Take~")
                         target_channel_name = data.get("target_channel")
@@ -257,15 +332,13 @@ async def on_message(message):
 
                         search_term = target_channel_name.lower().replace("#", "").replace("-", "").replace(" ", "") if target_channel_name else ""
 
-                        matched_text_channel = None
-                        if search_term:
-                            matched_text_channel = discord.utils.find(
-                                lambda c: search_term in c.name.lower().replace("-", ""),
-                                message.guild.text_channels
-                            )
+                        matched_text_channel = discord.utils.find(
+                            lambda c: search_term in c.name.lower().replace("-", ""),
+                            message.guild.text_channels
+                        )
 
                         matched_forum_channel = None
-                        if search_term and not matched_text_channel:
+                        if not matched_text_channel:
                             matched_forum_channel = discord.utils.find(
                                 lambda f: search_term in f.name.lower().replace("-", ""),
                                 message.guild.forums
