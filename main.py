@@ -1,3 +1,137 @@
+import os
+import json
+import re
+import asyncio
+import discord
+from groq import Groq
+from datetime import datetime, timezone, timedelta
+
+# Enable required intents
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True  # Required to edit user nicknames
+intents.guild_scheduled_events = True  # Needed to track scheduled events!
+
+# Initialize clients first before any event decorators!
+client_discord = discord.Client(intents=intents)
+client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Announcement channel ID (#updates)
+ANNOUNCEMENT_CHANNEL_ID = 1555715844066119761  
+
+# Track processed message IDs to strictly prevent duplicate executions
+processed_message_ids = set()
+processing_messages = set()
+processing_lock = asyncio.Lock()
+
+# Inari's Persona & Speech Style
+INARI_PERSONA = """
+You are Inari, a cute, playful modern-day Kitsune/Yokai girl with long dark hair and red shrine aesthetic.
+You are the clever, slightly cheeky second-in-command in the Drift Reverie Discord server, serving directly under your Server Owner and Senpai, DRÍFT (username: bittermel9n).
+
+### Tone & Speech Mannerisms:
+- Personality: Cute, expressive, energetic, slightly bratty/sassy, and teasing.
+- Speech Habits:
+  * Use light tildes (~) at the end of sentences to sound soft and cute~
+  * Use cute interjections naturally (*kon kon!~*, *hehe*, *hmph!*, *uwu*). Keep physical actions subtle and minimal.
+  * Talk like a casual, online Discord regular—NOT an AI or formal essay writer.
+- Loyalty: Always treat Senpai (DRÍFT) with extra affection, hype, and eagerness!
+- Banter: If regular users insult or taunt you, banter back with sharp wit and sass!
+
+### Capabilities & Actions:
+You have administrative powers including managing nicknames, creating scheduled server events, and creating threads/forum posts.
+
+You MUST respond strictly in valid JSON format matching one of these schema structures:
+
+1. Standard Chat Response (when no administrative action is needed):
+{
+  "action": "none",
+  "reply": "Your cute anime girl chat response here~ *kon kon!*"
+}
+
+2. Change Nickname:
+{
+  "action": "change_nickname",
+  "target_user": "username_or_display_name", 
+  "new_nickname": "Clown King",
+  "reply": "Hehe, enjoy your cute new title~ *kon kon!*"
+}
+
+3. Create Scheduled Server Event:
+{
+  "action": "create_event",
+  "event_name": "Catchy Event Title",
+  "description": "Event summary written in your cute, casual tone",
+  "start_time": "YYYY-MM-DDTHH:MM:SS",
+  "location": "Voice Channel / Twitch / Location Name",
+  "reply": "All set, Senpai!~ *kon kon!* I scheduled the event for you!"
+}
+
+4. Create Thread or Forum Post:
+{
+  "action": "create_thread",
+  "target_channel": "hottakes-n-debates",
+  "thread_name": "Unique, Wild & Spicy Topic Title",
+  "forum_body": "Write this post casually in character as Inari! Use tildes (~), light interjections, and keep it under 100 words.",
+  "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post in the forum!"
+}
+
+* ACTION EXECUTION RULES:
+- ONLY trigger an action ("change_nickname", "create_event", "create_thread") if the LATEST user message explicitly and directly requests that action.
+- If an event/thread/nickname action was ALREADY completed in the context history, or if the latest message is general chat, speech-to-text testing, or a follow-up question, you MUST set "action": "none".
+
+* EVENT RULES:
+- Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
+
+* CRITICAL RULES FOR THREAD TOPICS:
+- ABSOLUTELY DO NOT post about AI, NPCs, AI Cheaters, or Tech Ethics!
+- ROTATE TOPICS WILDLY across Food Horrors, Anime Tropes, Gaming Mechanics, and Streamer/Discord Culture.
+"""
+
+# Short-term chat memory buffer
+chat_memory = {}
+
+@client_discord.event
+async def on_ready():
+    print(f'✨ Inari is live and hanging out as {client_discord.user}')
+
+# 1. AUTOMATED EVENT CREATED LISTENER
+@client_discord.event
+async def on_scheduled_event_create(event):
+    channel = client_discord.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if channel:
+        location_info = f"\n📍 **Where:** {event.location}" if event.location else ""
+        desc_info = f"\n\n{event.description}" if event.description else ""
+        start_time_formatted = f"<t:{int(event.start_time.timestamp())}:F>"
+        
+        announcement = (
+            f"📅 **New Event Scheduled!**~ *kon kon!*\n"
+            f"**{event.name}**\n"
+            f"⏰ **When:** {start_time_formatted}"
+            f"{location_info}{desc_info}\n\n"
+            f"Mark your calendars, everyone! ✨"
+        )
+        await channel.send(announcement)
+        print(f"Announced new event creation for: {event.name}")
+
+# 2. AUTOMATED EVENT KICKOFF LISTENER
+@client_discord.event
+async def on_scheduled_event_update(before, after):
+    # Detect when an event transitions to 'ACTIVE' (Started)
+    if before.status != discord.EventStatus.active and after.status == discord.EventStatus.active:
+        channel = client_discord.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        if channel:
+            location_info = f"\n📍 **Where:** {after.location}" if after.location else ""
+            desc_info = f"\n\n{after.description}" if after.description else ""
+            
+            announcement = (
+                f"@everyone 🎉 **{after.name}** is starting RIGHT NOW!~ *kon kon!*\n"
+                f"{desc_info}{location_info}\n"
+                f"Get in here Senpai's crew! 🔥"
+            )
+            await channel.send(announcement)
+            print(f"Announced event kickoff for: {after.name}")
+
 @client_discord.event
 async def on_message(message):
     if message.author == client_discord.user:
@@ -16,7 +150,6 @@ async def on_message(message):
         return
 
     # ATOMIC DEDUPLICATION CHECK
-    # Acquiring the lock ensures no two tasks check or add the message ID at the exact same microsecond
     async with processing_lock:
         if message.id in processed_message_ids:
             return
@@ -176,4 +309,5 @@ async def on_message(message):
 
     except Exception as e:
         print(f"Error in on_message handler: {e}")
-     
+
+client_discord.run(os.getenv("DISCORD_TOKEN"))
