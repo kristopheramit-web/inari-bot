@@ -221,7 +221,7 @@ async def on_message(message):
     finally:
         async with processing_lock:
             processing_messages.discard(message.id)
-nally:
+finally:
         # Clean up processed message ID
         processing_messages.discard(message.id)
 
