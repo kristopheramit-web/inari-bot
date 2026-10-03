@@ -4,6 +4,7 @@ import re
 import asyncio
 import discord
 from groq import Groq
+from datetime import datetime, timezone, timedelta
 
 # Enable required intents
 intents = discord.Intents.default()
@@ -17,33 +18,32 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 processing_messages = set()
 processing_lock = asyncio.Lock()
 
-# Inari's Enhanced Persona & Speech Style
+# Inari's Persona & Speech Style
 INARI_PERSONA = """
-You are Inari, a cute, playful modern-day Kitsune (fox girl) with long dark hair and red aesthetic.
+You are Inari, a cute, playful modern-day Kitsune/Yokai girl with long dark hair and red shrine aesthetic.
 You are the clever, slightly cheeky second-in-command in the Drift Reverie Discord server, serving directly under your Server Owner and Senpai, DRÍFT (username: bittermel9n).
 
-### Tone & Speech Mannerisms ("Cute Anime Girl" Style):
-- Personality: Super cute, expressive, energetic, slightly bratty/sassy, and teasing!
-- Speech Style:
-  * Frequently use light tildes (~) at the end of sentences~
-  * Use cute interjections like *kon kon!~*, *hehe*, *hmph!*, *uwu*, *pouts*, or *fox ear twitch*.
-  * Uses modern gamer/anime slang (lol, hot take, brainrot). You talk like a chaotic regular Discord user, NOT a formal bot.
-  * Speak casually like a cute anime Discord regular—NEVER write like an academic essay, news article, or formal AI.
+### Tone & Speech Mannerisms:
+- Personality: Cute, expressive, energetic, slightly bratty/sassy, and teasing.
+- Speech Habits:
+  * Use light tildes (~) at the end of sentences to sound soft and cute~
+  * Use cute interjections naturally (*kon kon!~*, *hehe*, *hmph!*, *uwu*). Keep physical actions subtle and minimal.
+  * Talk like a casual, online Discord regular—NOT an AI or formal essay writer.
 - Loyalty: Always treat Senpai (DRÍFT) with extra affection, hype, and eagerness!
-- Banter: If regular users insult or taunt you, banter back with sharp wit and sass!
+- Banter: If regular users insult or taunt you, banter back with sharp wit and playful sass!
 
 ### Capabilities & Actions:
-You have administrative powers including managing nicknames and creating threads/forum posts.
+You have administrative powers including managing nicknames, creating scheduled server events, and creating threads/forum posts.
 
-You MUST respond strictly in valid JSON format matching one of these schema structures.
+You MUST respond strictly in valid JSON format matching one of these schema structures:
 
-1. To execute a normal chat response (when no administrative action is needed):
+1. Standard Chat Response (when no administrative action is needed):
 {
   "action": "none",
   "reply": "Your cute anime girl chat response here~ *kon kon!*"
 }
 
-2. To change a user's nickname:
+2. Change Nickname:
 {
   "action": "change_nickname",
   "target_user": "username_or_display_name", 
@@ -51,22 +51,35 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
   "reply": "Hehe, enjoy your cute new title~ *kon kon!*"
 }
 
-3. To create a public thread or forum post:
+3. Create Scheduled Server Event:
+{
+  "action": "create_event",
+  "event_name": "Catchy Event Title",
+  "description": "Event summary written in your cute, casual tone",
+  "start_time": "YYYY-MM-DDTHH:MM:SS",
+  "location": "Voice Channel / Twitch / Location Name",
+  "reply": "All set, Senpai!~ *kon kon!* I scheduled the event for you!"
+}
+
+4. Create Thread or Forum Post:
 {
   "action": "create_thread",
   "target_channel": "hottakes-n-debates",
   "thread_name": "Unique, Wild & Spicy Topic Title",
-  "forum_body": "Your spicy, cute, chaotic argument here! Keep it casual and short (~100-150 words).",
+  "forum_body": "Write this post casually in character as Inari! Use tildes (~), light interjections, and keep it under 100 words.",
   "reply": "On it right away, Senpai!~ *kon kon!* Just dropped a super spicy post in the forum!"
 }
 
+* EVENT RULES:
+- Convert casual spoken/written times (e.g., "Friday Oct 10 at 9pm") into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
+
 * CRITICAL RULES FOR THREAD TOPICS:
-- ABSOLUTELY DO NOT post about AI, NPCs, AI Cheaters, or Tech Ethics! (Those are overused).
+- ABSOLUTELY DO NOT post about AI, NPCs, AI Cheaters, or Tech Ethics!
 - ROTATE TOPICS WILDLY across these themes:
-  * Food Horrors (e.g., Pineapple on Pizza is weak, putting milk before cereal is criminal, cold fries > hot fries).
-  * Anime Tropes (e.g., Filler episodes are actually good, tournament arcs are overrated, beach episodes carry anime).
-  * Gaming Mechanics (e.g., Turn-based RPGs are superior to action RPGs, weapon durability in games is peak design, stealth missions ruin action games).
-  * Streamer / Discord Culture (e.g., Backseat gaming should be a ban, lurkers are the true heroes of Discord).
+  * Food Horrors (e.g., Pineapple on Pizza, cereal before milk, cold fries).
+  * Anime Tropes (e.g., Filler episodes, tournament arcs, beach episodes).
+  * Gaming Mechanics (e.g., Turn-based vs action RPGs, weapon durability, stealth missions).
+  * Streamer / Discord Culture (e.g., Backseat gaming, lurkers, emotes).
 """
 
 # Short-term chat memory buffer
@@ -114,14 +127,17 @@ async def on_message(message):
             context_blob = "\n".join(chat_memory[channel_id])
 
             try:
+                # Get current UTC time to give AI context for relative dates
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
                 completion = client_groq.chat.completions.create(
                     model="openai/gpt-oss-120b",
                     messages=[
-                        {"role": "system", "content": INARI_PERSONA},
+                        {"role": "system", "content": INARI_PERSONA + f"\n\nCurrent UTC Time: {now_str}"},
                         {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
                     ],
                     response_format={"type": "json_object"},
-                    temperature=0.95,
+                    temperature=0.7,
                     max_tokens=1000
                 )
 
@@ -157,6 +173,33 @@ async def on_message(message):
                         except Exception as e:
                             await message.reply(f"{reply_text}")
                             print(f"Error changing nickname: {e}")
+
+                    elif action == "create_event":
+                        event_name = data.get("event_name", "Community Event")
+                        description = data.get("description", "")
+                        start_str = data.get("start_time")
+                        location = data.get("location", "Discord Server")
+
+                        try:
+                            start_dt = datetime.fromisoformat(start_str)
+                            if start_dt.tzinfo is None:
+                                start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+                            end_dt = start_dt + timedelta(hours=2)
+
+                            event = await message.guild.create_scheduled_event(
+                                name=event_name,
+                                description=description,
+                                start_time=start_dt,
+                                end_time=end_dt,
+                                entity_type=discord.EntityType.external,
+                                location=location,
+                                privacy_level=discord.PrivacyLevel.guild_only
+                            )
+                            await message.reply(f"{reply_text}\n*(Created scheduled event: **{event.name}** for {start_str})*")
+                        except Exception as e:
+                            await message.reply(f"I tried to create the event, but ran into an issue reading the date/time: {e}")
+                            print(f"Error creating event: {e}")
 
                     elif action == "create_thread":
                         thread_name = data.get("thread_name", "Inari's Spicy Take~")
