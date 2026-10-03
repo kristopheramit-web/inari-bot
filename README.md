@@ -1,0 +1,2 @@
+# inari-bot
+Discord Chatbot
