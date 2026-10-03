@@ -55,7 +55,7 @@ async def on_message(message):
 
             # Generate response via Groq API (Free Tier)
             completion = client_groq.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[
                     {"role": "system", "content": INARI_PERSONA},
                     {"role": "user", "content": f"Recent Chat Context:\n{context_blob}\n\nRespond as Inari to {message.author.display_name}:"}
