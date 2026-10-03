@@ -15,7 +15,7 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 # Track in-flight messages to prevent duplicate triggers
 processing_messages = set()
 
-# Inari's Enhanced Persona with Creative Dynamic Prompting
+# Inari's Persona Prompt
 INARI_PERSONA = """
 You are Inari, a modern-day Kitsune/yokai girl and clever second-in-command in the Drift Reverie Discord server.
 You serve directly under your Server Owner and Senpai, DRÍFT (username: bittermel9n).
@@ -59,7 +59,7 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
 - `reply`: This is your short confirmation back to DRÍFT in the current chat.
 """
 
-# Short-term chat memory buffer (channel_id: list of recent messages)
+# Short-term chat memory buffer
 chat_memory = {}
 
 @client_discord.event
@@ -86,7 +86,7 @@ async def on_message(message):
         if len(chat_memory[channel_id]) > 5:
             chat_memory[channel_id].pop(0)
 
-        # Trigger conditions: Direct mention, message reply, or keyword "inari"
+        # Trigger conditions
         is_mentioned = client_discord.user in message.mentions or "inari" in message.content.lower()
         is_reply_to_bot = (
             message.reference 
@@ -200,20 +200,6 @@ async def on_message(message):
 
                     else:
                         await message.reply("Oops, my fox ears got tangled processing that response! Mind asking again, Senpai?")
-
-                except Exception as e:
-                    print(f"Groq API Error: {e}")
-
-    finally:
-        # Clean up processed message ID
-        processing_messages.discard(message.id)
-
-client_discord.run(os.getenv("DISCORD_TOKEN"))
-                                print(f"Error creating thread/forum post: {e}")
-
-                    else:
-                        # Standard plain text response
-                        await message.reply(raw_response)
 
                 except Exception as e:
                     print(f"Groq API Error: {e}")
