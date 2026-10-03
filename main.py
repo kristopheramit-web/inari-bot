@@ -18,7 +18,8 @@ client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 # Announcement channel ID (#updates)
 ANNOUNCEMENT_CHANNEL_ID = 1555715844066119761  
 
-# Track in-flight message IDs to strictly prevent double execution
+# Track processed message IDs to strictly prevent duplicate executions
+processed_message_ids = set()
 processing_messages = set()
 processing_lock = asyncio.Lock()
 
@@ -75,8 +76,8 @@ You MUST respond strictly in valid JSON format matching one of these schema stru
 }
 
 * ACTION EXECUTION RULES:
-- ONLY trigger an action ("change_nickname", "create_event", "create_thread") if the MOST RECENT user message explicitly requests that action.
-- If the latest message is general chat, testing speech-to-text, or normal conversation, respond with "action": "none" regardless of previous conversation history.
+- ONLY trigger an action ("change_nickname", "create_event", "create_thread") if the LATEST user message explicitly and directly requests that action.
+- If an event/thread/nickname action was ALREADY completed in the context history, or if the latest message is general chat, speech-to-text testing, or a follow-up question, you MUST set "action": "none".
 
 * EVENT RULES:
 - Convert casual spoken/written times into accurate ISO 8601 strings (YYYY-MM-DDTHH:MM:SS).
@@ -135,11 +136,11 @@ async def on_message(message):
     if message.author == client_discord.user:
         return
 
-    # Atomic lock check to prevent duplicate trigger executions
+    # Atomic deduplication check
     async with processing_lock:
-        if message.id in processing_messages:
+        if message.id in processed_message_ids or message.id in processing_messages:
             return
-        
+
         # Trigger conditions
         is_mentioned = client_discord.user in message.mentions or "inari" in message.content.lower()
         is_reply_to_bot = (
@@ -153,6 +154,11 @@ async def on_message(message):
             return
 
         processing_messages.add(message.id)
+        processed_message_ids.add(message.id)
+
+        # Keep processed message ID set from growing indefinitely
+        if len(processed_message_ids) > 1000:
+            processed_message_ids.pop()
 
     try:
         channel_id = str(message.channel.id)
@@ -214,7 +220,6 @@ async def on_message(message):
                             await message.reply(f"{reply_text}")
                             print(f"Error changing nickname: {e}")
 
-                        # Reset context buffer after performing action
                         chat_memory[channel_id] = []
 
                     elif action == "create_event":
@@ -244,7 +249,6 @@ async def on_message(message):
                             await message.reply(f"I tried to create the event, but ran into an issue reading the date/time: {e}")
                             print(f"Error creating event: {e}")
 
-                        # Reset context buffer after performing action
                         chat_memory[channel_id] = []
 
                     elif action == "create_thread":
@@ -293,7 +297,6 @@ async def on_message(message):
                             await message.reply(f"I tried to create the post, but hit an issue: {e}")
                             print(f"Error creating thread/forum post: {e}")
 
-                        # Reset context buffer after performing action
                         chat_memory[channel_id] = []
 
                     else:
@@ -310,4 +313,3 @@ async def on_message(message):
             processing_messages.discard(message.id)
 
 client_discord.run(os.getenv("DISCORD_TOKEN"))
-                             
